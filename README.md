@@ -19,6 +19,7 @@ Os dispositivos cadastrados ficam em `data/devices.json`.
 - Status online/offline com verificação ICMP, atualizado a cada 15 segundos.
 - Ligar via Wake-on-LAN (WoL), por pacote UDP broadcast para a porta 9. SSH não consegue iniciar um computador que está desligado.
 - Cadastro e remoção de dispositivos Windows e Linux.
+- Edição de nome, IP, MAC, sistema operacional, broadcast e destino/porta SSH dos dispositivos.
 - Interface responsiva em tema escuro com Bootstrap e Bootstrap Icons via CDN.
 - Desligamento e reinício remotos de Windows e Linux via SSH com autenticação por chave.
 - Modal de informações do equipamento com inventário consultado via SSH (sistema, CPU, memória, discos, rede e dados de hardware disponíveis).

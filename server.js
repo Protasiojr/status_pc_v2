@@ -208,11 +208,19 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'DELETE' && !match[2]) { devices.splice(index, 1); saveDevices(devices); return send(res, 200, { ok: true }); }
       if (req.method === 'PATCH' && !match[2]) {
         const body = await getBody(req);
-        const sshHost = String(body.sshHost || '').trim();
-        const sshPort = Number(body.sshPort || 22);
-        if (!/^[\w.@-]{1,100}$/.test(sshHost)) return send(res, 400, { error: 'Informe um destino válido no formato usuario@IP ou usuario@hostname.' });
+        const current = devices[index];
+        const name = body.name === undefined ? current.name : String(body.name).trim().slice(0, 60);
+        const ip = body.ip === undefined ? current.ip : String(body.ip).trim();
+        const mac = body.mac === undefined ? current.mac : String(body.mac || '').trim();
+        const platform = body.platform === undefined ? current.platform : body.platform;
+        const sshHost = body.sshHost === undefined ? (current.sshHost || '') : String(body.sshHost || '').trim();
+        const sshPort = Number(body.sshPort || current.sshPort || 22);
+        const broadcast = body.broadcast === undefined ? current.broadcast : (validIp(body.broadcast) ? body.broadcast : '255.255.255.255');
+        if (!name || !validIp(ip) || (mac && !validMac(mac))) return send(res, 400, { error: 'Informe nome e IPv4 válidos; se preencher MAC, ele precisa ser válido.' });
+        if (!['windows', 'linux'].includes(platform)) return send(res, 400, { error: 'Selecione Windows ou Linux.' });
+        if (sshHost && !/^[\w.@-]{1,100}$/.test(sshHost)) return send(res, 400, { error: 'Informe um destino válido no formato usuario@IP ou usuario@hostname.' });
         if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65535) return send(res, 400, { error: 'A porta SSH precisa estar entre 1 e 65535.' });
-        devices[index] = { ...devices[index], sshHost, sshPort };
+        devices[index] = { ...current, name, ip, mac: validMac(mac) ? mac.toUpperCase().replace(/-/g, ':') : '', platform, sshHost, sshPort, broadcast };
         saveDevices(devices);
         return send(res, 200, { ok: true, device: devices[index] });
       }

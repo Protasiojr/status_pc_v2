@@ -7,6 +7,7 @@ let sshAction = 'shutdown';
 let scanDevices = [];
 let localAddresses = [];
 let selectedMapIp = '';
+let editingDeviceId = null;
 
 function notify(message) { document.querySelector('#toast-message').textContent = message; toast.show(); }
 async function api(url, options) {
@@ -27,7 +28,7 @@ function render() {
     list.innerHTML = query ? '<div class="empty-state"><i class="bi bi-search"></i><strong>Nenhum resultado</strong><p>Tente outro nome, IP ou MAC.</p></div>' : '<div class="empty-state"><i class="bi bi-pc-display"></i><strong>Sua rede começa aqui</strong><p>Adicione o primeiro computador para acompanhar seu status.</p></div>';
     return;
   }
-  list.innerHTML = visible.map(d => `<article class="device-card"><div class="device-top"><div class="device-ident"><div class="device-icon"><i class="bi ${d.platform === 'linux' ? 'bi-ubuntu' : 'bi-windows'}"></i></div><div class="min-w-0"><div class="device-name">${escapeHtml(d.name)}</div><div class="device-os">${d.platform === 'linux' ? 'Linux' : 'Windows'} · ${escapeHtml(d.ip)}</div></div></div><span class="status ${d.online ? 'online' : 'offline'}"><span class="status-dot"></span>${d.online ? 'ONLINE' : 'OFFLINE'}</span></div><div class="device-meta"><div class="meta-item"><span>ENDEREÇO IP</span><strong>${escapeHtml(d.ip)}</strong></div><div class="meta-item"><span>ENDEREÇO MAC</span><strong>${escapeHtml(d.mac || 'Não localizado')}</strong></div></div><div class="device-actions"><button class="action-btn wake" data-action="wake" data-id="${d.id}" title="Enviar pacote Wake-on-LAN" ${d.mac ? '' : 'disabled'}><i class="bi bi-power"></i> Ligar (WoL)</button><button class="action-btn shutdown" data-action="shutdown" data-id="${d.id}" title="Configurar SSH e desligar"><i class="bi bi-moon"></i> Desligar (SSH)</button><button class="action-btn restart" data-action="restart" data-id="${d.id}" title="Configurar SSH e reiniciar"><i class="bi bi-arrow-clockwise"></i> Reiniciar</button><button class="action-btn info" data-action="info" data-id="${d.id}" title="Consultar informações do equipamento"><i class="bi bi-info-circle"></i> Info</button><button class="action-btn" data-action="refresh" data-id="${d.id}"><i class="bi bi-arrow-repeat"></i> Status</button><button class="delete-btn" data-action="delete" data-id="${d.id}" title="Remover" aria-label="Remover ${escapeHtml(d.name)}"><i class="bi bi-trash3"></i></button></div></article>`).join('');
+  list.innerHTML = visible.map(d => `<article class="device-card"><div class="device-top"><div class="device-ident"><div class="device-icon"><i class="bi ${d.platform === 'linux' ? 'bi-ubuntu' : 'bi-windows'}"></i></div><div class="min-w-0"><div class="device-name">${escapeHtml(d.name)}</div><div class="device-os">${d.platform === 'linux' ? 'Linux' : 'Windows'} · ${escapeHtml(d.ip)}</div></div></div><span class="status ${d.online ? 'online' : 'offline'}"><span class="status-dot"></span>${d.online ? 'ONLINE' : 'OFFLINE'}</span></div><div class="device-meta"><div class="meta-item"><span>ENDEREÇO IP</span><strong>${escapeHtml(d.ip)}</strong></div><div class="meta-item"><span>ENDEREÇO MAC</span><strong>${escapeHtml(d.mac || 'Não localizado')}</strong></div></div><div class="device-actions"><button class="action-btn wake" data-action="wake" data-id="${d.id}" title="Enviar pacote Wake-on-LAN" ${d.mac ? '' : 'disabled'}><i class="bi bi-power"></i> Ligar (WoL)</button><button class="action-btn shutdown" data-action="shutdown" data-id="${d.id}" title="Configurar SSH e desligar"><i class="bi bi-moon"></i> Desligar (SSH)</button><button class="action-btn restart" data-action="restart" data-id="${d.id}" title="Configurar SSH e reiniciar"><i class="bi bi-arrow-clockwise"></i> Reiniciar</button><button class="action-btn info" data-action="info" data-id="${d.id}" title="Consultar informações do equipamento"><i class="bi bi-info-circle"></i> Info</button><button class="action-btn edit" data-action="edit" data-id="${d.id}" title="Editar configurações"><i class="bi bi-pencil-square"></i> Editar</button><button class="action-btn" data-action="refresh" data-id="${d.id}"><i class="bi bi-arrow-repeat"></i> Status</button><button class="delete-btn" data-action="delete" data-id="${d.id}" title="Remover" aria-label="Remover ${escapeHtml(d.name)}"><i class="bi bi-trash3"></i></button></div></article>`).join('');
 }
 async function refresh(showError = false) {
   try { const result = await api('/api/devices'); devices = result.devices; sshEnabled = result.sshEnabled; localAddresses = result.networkInterfaces || []; document.querySelector('#last-update').textContent = `Atualizado às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`; document.querySelector('#refresh').classList.remove('is-error'); render(); renderNetworkMap(); }
@@ -35,6 +36,23 @@ async function refresh(showError = false) {
 }
 document.querySelector('#refresh').addEventListener('click', () => refresh(true));
 document.querySelector('#search').addEventListener('input', render);
+function prepareDeviceModal(device = null) {
+  const form = document.querySelector('#device-form'); form.reset();
+  document.querySelector('#form-error').textContent = '';
+  editingDeviceId = device?.id || null;
+  document.querySelector('#device-modal-title').textContent = device ? 'Editar dispositivo' : 'Adicionar dispositivo';
+  document.querySelector('#device-submit').innerHTML = device ? '<i class="bi bi-check2"></i> <span>Salvar alterações</span>' : '<i class="bi bi-plus-lg"></i> <span>Adicionar</span>';
+  if (device) {
+    document.querySelector('#name').value = device.name;
+    document.querySelector('#ip').value = device.ip;
+    document.querySelector('#mac').value = device.mac || '';
+    document.querySelector('#platform').value = device.platform;
+    document.querySelector('#broadcast').value = device.broadcast || '';
+    document.querySelector('#sshHost').value = device.sshHost || '';
+    document.querySelector('#sshPortDevice').value = device.sshPort || 22;
+  }
+}
+document.querySelector('.add-button').addEventListener('click', () => prepareDeviceModal());
 document.querySelector('#scan-network').addEventListener('click', async event => {
   const button = event.currentTarget; const results = document.querySelector('#scan-results'); const summary = document.querySelector('#scan-summary');
   button.disabled = true; button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Scan...';
@@ -55,7 +73,7 @@ document.querySelector('#scan-results').addEventListener('click', event => {
   const found = scanDevices[Number(button.dataset.scanIndex)]; if (!found) return;
   const scanModal = document.querySelector('#scan-modal');
   scanModal.addEventListener('hidden.bs.modal', () => {
-    const form = document.querySelector('#device-form'); form.reset();
+    prepareDeviceModal();
     document.querySelector('#name').value = `PC-${found.ip.split('.').at(-1)}`;
     document.querySelector('#ip').value = found.ip;
     document.querySelector('#mac').value = found.mac;
@@ -83,8 +101,12 @@ document.querySelector('#save-config').addEventListener('click', async event => 
 });
 document.querySelector('#device-form').addEventListener('submit', async event => {
   event.preventDefault(); const errorBox = document.querySelector('#form-error'); errorBox.textContent = '';
-  const device = { name: document.querySelector('#name').value, ip: document.querySelector('#ip').value.trim(), mac: document.querySelector('#mac').value.trim(), platform: document.querySelector('#platform').value, broadcast: document.querySelector('#broadcast').value.trim(), sshHost: document.querySelector('#sshHost').value.trim() };
-  try { await api('/api/devices', { method: 'POST', body: JSON.stringify(device) }); event.target.reset(); bootstrap.Modal.getInstance(document.querySelector('#device-modal')).hide(); await refresh(); notify('Dispositivo adicionado.'); }
+  const device = { name: document.querySelector('#name').value, ip: document.querySelector('#ip').value.trim(), mac: document.querySelector('#mac').value.trim(), platform: document.querySelector('#platform').value, broadcast: document.querySelector('#broadcast').value.trim(), sshHost: document.querySelector('#sshHost').value.trim(), sshPort: Number(document.querySelector('#sshPortDevice').value || 22) };
+  try {
+    if (editingDeviceId) await api(`/api/devices/${editingDeviceId}`, { method: 'PATCH', body: JSON.stringify(device) });
+    else await api('/api/devices', { method: 'POST', body: JSON.stringify(device) });
+    const wasEditing = Boolean(editingDeviceId); editingDeviceId = null; prepareDeviceModal(); bootstrap.Modal.getInstance(document.querySelector('#device-modal')).hide(); await refresh(); notify(wasEditing ? 'Configurações atualizadas.' : 'Dispositivo adicionado.');
+  }
   catch (error) { errorBox.textContent = error.message; }
 });
 function openSshModal(device, action = 'shutdown') {
@@ -206,6 +228,7 @@ async function showInfo(device) {
 list.addEventListener('click', async event => {
   const button = event.target.closest('[data-action]'); if (!button) return;
   const { action, id } = button.dataset; const device = devices.find(d => d.id === id); if (!device) return;
+  if (action === 'edit') { prepareDeviceModal(device); bootstrap.Modal.getOrCreateInstance(document.querySelector('#device-modal')).show(); return; }
   if (action === 'info') { showInfo(device); return; }
   if (action === 'shutdown' || action === 'restart') { openSshModal(device, action); return; }
   if (action === 'delete' && !confirm(`Remover ${device.name} do painel?`)) return;
