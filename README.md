@@ -10,7 +10,7 @@ Requer Node.js 18 ou mais recente. Na pasta do projeto, execute:
 npm start
 ```
 
-Abra `http://localhost:3000`. Para acessar de outro aparelho na mesma rede, abra `http://IP-DO-SERVIDOR:3000`. O servidor mostra os endereços IPv4 disponíveis no painel ao consultar a API.
+O STATUS PC utiliza a porta **6001** por padrão. Abra `http://localhost:6001`. Para acessar de outro aparelho na mesma rede, abra `http://IP-DO-SERVIDOR:6001`. O servidor mostra os endereços IPv4 disponíveis no painel ao consultar a API. A porta pode ser alterada pela variável de ambiente `PORT`.
 
 Os dispositivos cadastrados ficam em `data/devices.json`.
 

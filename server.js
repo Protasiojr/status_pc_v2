@@ -5,7 +5,7 @@ const os = require('node:os');
 const dgram = require('node:dgram');
 const { execFile } = require('node:child_process');
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 6001);
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'devices.json');
