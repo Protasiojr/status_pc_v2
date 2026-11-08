@@ -9,6 +9,7 @@ let localAddresses = [];
 let selectedMapIp = '';
 let editingDeviceId = null;
 let importConfig = null;
+let generatedPrivateKey = '';
 
 function notify(message) { document.querySelector('#toast-message').textContent = message; toast.show(); }
 async function api(url, options) {
@@ -39,7 +40,12 @@ document.querySelector('#refresh').addEventListener('click', () => refresh(true)
 document.querySelector('#search').addEventListener('input', render);
 function prepareDeviceModal(device = null) {
   const form = document.querySelector('#device-form'); form.reset();
+  generatedPrivateKey = '';
   document.querySelector('#form-error').textContent = '';
+  document.querySelector('#ssh-test-result').textContent = '';
+  document.querySelector('#ssh-key-status').textContent = device?.sshPrivateKeyConfigured ? 'Chave privada salva; deixe o campo vazio para mantê-la.' : '';
+  document.querySelector('#sshPasswordDevice').placeholder = device?.sshPasswordConfigured ? 'Deixe vazio para manter a senha salva' : 'Senha da conta SSH ou passphrase da chave';
+  document.querySelector('#sshPrivateKeyDevice').placeholder = device?.sshPrivateKeyConfigured ? 'Deixe vazio para manter a chave privada salva' : 'Cole uma chave privada OpenSSH ou gere um par abaixo';
   editingDeviceId = device?.id || null;
   document.querySelector('#device-modal-title').textContent = device ? 'Editar dispositivo' : 'Adicionar dispositivo';
   document.querySelector('#device-submit').innerHTML = device ? '<i class="bi bi-check2"></i> <span>Salvar alterações</span>' : '<i class="bi bi-plus-lg"></i> <span>Adicionar</span>';
@@ -51,9 +57,50 @@ function prepareDeviceModal(device = null) {
     document.querySelector('#broadcast').value = device.broadcast || '';
     document.querySelector('#sshHost').value = device.sshHost || '';
     document.querySelector('#sshPortDevice').value = device.sshPort || 22;
+    document.querySelector('#sshKeyPathDevice').value = device.sshKeyPath || '';
+    document.querySelector('#sshPublicKeyDevice').value = device.sshPublicKey || '';
   }
 }
 document.querySelector('.add-button').addEventListener('click', () => prepareDeviceModal());
+document.querySelector('#sshPrivateKeyDevice').addEventListener('input', event => {
+  if (event.currentTarget.value !== generatedPrivateKey) document.querySelector('#sshPublicKeyDevice').value = '';
+});
+document.querySelector('#generate-ssh-key').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const status = document.querySelector('#ssh-key-status');
+  button.disabled = true;
+  status.textContent = 'Gerando par de chaves...';
+  try {
+    const pair = await api('/api/ssh/generate-key', { method: 'POST' });
+    generatedPrivateKey = pair.privateKey;
+    document.querySelector('#sshPrivateKeyDevice').value = pair.privateKey;
+    document.querySelector('#sshKeyPathDevice').value = '';
+    document.querySelector('#sshPublicKeyDevice').value = pair.publicKey;
+    status.textContent = 'Copie a chave pública para authorized_keys do equipamento remoto.';
+  } catch (error) { status.textContent = error.message; }
+  finally { button.disabled = false; }
+});
+document.querySelector('#test-ssh').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const result = document.querySelector('#ssh-test-result');
+  result.classList.remove('form-error');
+  result.textContent = 'Testando conexão...';
+  button.disabled = true;
+  try {
+    await api('/api/ssh/test', { method: 'POST', body: JSON.stringify({
+      id: editingDeviceId || undefined,
+      sshHost: document.querySelector('#sshHost').value.trim(),
+      sshPort: Number(document.querySelector('#sshPortDevice').value || 22),
+      sshPassword: document.querySelector('#sshPasswordDevice').value,
+      sshKeyPath: document.querySelector('#sshKeyPathDevice').value.trim(),
+      sshPrivateKey: document.querySelector('#sshPrivateKeyDevice').value
+    }) });
+    result.textContent = 'Conexão SSH confirmada.';
+  } catch (error) {
+    result.classList.add('form-error');
+    result.textContent = error.message;
+  } finally { button.disabled = false; }
+});
 document.querySelector('#scan-network').addEventListener('click', async event => {
   const button = event.currentTarget; const results = document.querySelector('#scan-results'); const summary = document.querySelector('#scan-summary');
   button.disabled = true; button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Scan...';
@@ -129,7 +176,7 @@ document.querySelector('#import-submit').addEventListener('click', async event =
 });
 document.querySelector('#device-form').addEventListener('submit', async event => {
   event.preventDefault(); const errorBox = document.querySelector('#form-error'); errorBox.textContent = '';
-  const device = { name: document.querySelector('#name').value, ip: document.querySelector('#ip').value.trim(), mac: document.querySelector('#mac').value.trim(), platform: document.querySelector('#platform').value, broadcast: document.querySelector('#broadcast').value.trim(), sshHost: document.querySelector('#sshHost').value.trim(), sshPort: Number(document.querySelector('#sshPortDevice').value || 22) };
+  const device = { name: document.querySelector('#name').value, ip: document.querySelector('#ip').value.trim(), mac: document.querySelector('#mac').value.trim(), platform: document.querySelector('#platform').value, broadcast: document.querySelector('#broadcast').value.trim(), sshHost: document.querySelector('#sshHost').value.trim(), sshPort: Number(document.querySelector('#sshPortDevice').value || 22), sshPassword: document.querySelector('#sshPasswordDevice').value, clearSshPassword: document.querySelector('#clearSshPassword').checked, sshKeyPath: document.querySelector('#sshKeyPathDevice').value.trim(), sshPrivateKey: document.querySelector('#sshPrivateKeyDevice').value, clearSshPrivateKey: document.querySelector('#clearSshPrivateKey').checked, sshPublicKey: document.querySelector('#sshPublicKeyDevice').value.trim() };
   try {
     if (editingDeviceId) await api(`/api/devices/${editingDeviceId}`, { method: 'PATCH', body: JSON.stringify(device) });
     else await api('/api/devices', { method: 'POST', body: JSON.stringify(device) });
@@ -146,8 +193,9 @@ function openSshModal(device, action = 'shutdown') {
   document.querySelector('#ssh-platform').textContent = device.platform === 'linux' ? 'Linux' : 'Windows';
   document.querySelector('#ssh-error').textContent = '';
   const notice = document.querySelector('#ssh-key-notice');
-  notice.classList.toggle('warning', !sshEnabled);
-  notice.querySelector('span').textContent = sshEnabled ? 'Chave SSH configurada no servidor.' : 'SSH_KEY_PATH ainda não está configurada no servidor. Você pode salvar o destino, mas precisa configurar a chave antes de desligar.';
+  const credentialsConfigured = Boolean(device.sshPasswordConfigured || device.sshPrivateKeyConfigured || device.sshKeyPath || sshEnabled);
+  notice.classList.toggle('warning', !credentialsConfigured);
+  notice.querySelector('span').textContent = credentialsConfigured ? 'Credenciais SSH configuradas. O equipamento precisa aceitar senha ou chave e constar em known_hosts.' : 'Informe uma senha SSH ou o caminho da chave privada no cadastro deste dispositivo.';
   const actionLabel = action === 'restart' ? 'reiniciar' : 'desligar';
   document.querySelector('#ssh-submit').innerHTML = device.online ? `<i class="bi ${action === 'restart' ? 'bi-arrow-clockwise' : 'bi-power'}"></i> Salvar e ${actionLabel}` : '<i class="bi bi-check2"></i> Salvar configuração';
   bootstrap.Modal.getOrCreateInstance(document.querySelector('#ssh-modal')).show();

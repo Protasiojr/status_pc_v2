@@ -3,5 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "description": "Painel local para monitoramento e gerenciamento de computadores via LAN",
-  "scripts": { "start": "node server.js", "dev": "node --watch server.js" }
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "ssh2": "^1.17.0"
+  }
 }
