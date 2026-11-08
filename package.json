@@ -5,7 +5,8 @@
   "description": "Painel local para monitoramento e gerenciamento de computadores via LAN",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "ssh2": "^1.17.0"

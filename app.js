@@ -12,6 +12,18 @@ let importConfig = null;
 let generatedPrivateKey = '';
 
 function notify(message) { document.querySelector('#toast-message').textContent = message; toast.show(); }
+const validationMessage = window.StatusPcValidation.validationMessage;
+function validateField(field) {
+  const message = validationMessage(field);
+  field.setCustomValidity(message);
+  field.classList.toggle('is-invalid', Boolean(message));
+  if (message) field.setAttribute('aria-invalid', 'true');
+  else field.removeAttribute('aria-invalid');
+}
+document.querySelectorAll('#device-form input, #device-form textarea, #device-form select, #ssh-form input').forEach(field => {
+  field.addEventListener('input', () => validateField(field));
+  field.addEventListener('change', () => validateField(field));
+});
 async function api(url, options) {
   const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) } });
   const body = await response.json().catch(() => ({}));
@@ -40,6 +52,7 @@ document.querySelector('#refresh').addEventListener('click', () => refresh(true)
 document.querySelector('#search').addEventListener('input', render);
 function prepareDeviceModal(device = null) {
   const form = document.querySelector('#device-form'); form.reset();
+  form.querySelectorAll('input, textarea').forEach(field => { field.setCustomValidity(''); field.classList.remove('is-invalid'); field.removeAttribute('aria-invalid'); });
   generatedPrivateKey = '';
   document.querySelector('#form-error').textContent = '';
   document.querySelector('#ssh-test-result').textContent = '';
@@ -197,7 +210,7 @@ function openSshModal(device, action = 'shutdown') {
   notice.classList.toggle('warning', !credentialsConfigured);
   notice.querySelector('span').textContent = credentialsConfigured ? 'Credenciais SSH configuradas. O equipamento precisa aceitar senha ou chave e constar em known_hosts.' : 'Informe uma senha SSH ou o caminho da chave privada no cadastro deste dispositivo.';
   const actionLabel = action === 'restart' ? 'reiniciar' : 'desligar';
-  document.querySelector('#ssh-submit').innerHTML = device.online ? `<i class="bi ${action === 'restart' ? 'bi-arrow-clockwise' : 'bi-power'}"></i> Salvar e ${actionLabel}` : '<i class="bi bi-check2"></i> Salvar configuração';
+  document.querySelector('#ssh-submit').innerHTML = `<i class="bi ${action === 'restart' ? 'bi-arrow-clockwise' : 'bi-power'}"></i> Salvar e ${actionLabel}`;
   bootstrap.Modal.getOrCreateInstance(document.querySelector('#ssh-modal')).show();
 }
 document.querySelector('#ssh-form').addEventListener('submit', async event => {
@@ -210,9 +223,10 @@ document.querySelector('#ssh-form').addEventListener('submit', async event => {
   try {
     const settings = { sshHost: document.querySelector('#ssh-destination').value.trim(), sshPort: Number(document.querySelector('#ssh-port').value) };
     await api(`/api/devices/${sshDevice.id}`, { method: 'PATCH', body: JSON.stringify(settings) });
-    if (sshDevice.online) await api(`/api/devices/${sshDevice.id}/${sshAction}`, { method: 'POST' });
+    // Ping is only a status hint; firewalls may block ICMP while SSH remains available.
+    await api(`/api/devices/${sshDevice.id}/${sshAction}`, { method: 'POST' });
     bootstrap.Modal.getInstance(document.querySelector('#ssh-modal')).hide();
-    notify(sshDevice.online ? `Comando para ${actionLabel} ${sshDevice.name} enviado.` : `Configuração SSH salva para ${sshDevice.name}.`);
+    notify(`Comando para ${actionLabel} ${sshDevice.name} enviado.`);
     await refresh();
   } catch (error) { errorBox.textContent = error.message; }
   finally { submit.disabled = false; }
@@ -299,7 +313,7 @@ async function showInfo(device) {
     const details = { registeredName: device.name, ip: device.ip, mac: device.mac, platform: device.platform === 'linux' ? 'Linux' : 'Windows', ...result.info, collectedAt: new Date(result.collectedAt).toLocaleString('pt-BR') };
     content.innerHTML = Object.entries(details).map(([key, value]) => `<div class="info-item"><span>${escapeHtml(infoLabels[key] || key)}</span><strong>${escapeHtml(formatInfo(value))}</strong></div>`).join('');
   } catch (error) {
-    content.innerHTML = `<div class="info-error"><i class="bi bi-exclamation-circle"></i><strong>Não foi possível consultar o equipamento</strong><p>${escapeHtml(error.message)}</p><small>Confirme se está online, se o destino SSH está configurado, se a chave do servidor está autorizada e se o host consta em known_hosts.</small></div>`;
+    content.innerHTML = `<div class="info-error"><i class="bi bi-exclamation-circle"></i><strong>Não foi possível consultar o equipamento</strong><p>${escapeHtml(error.message)}</p><small>Confirme se o SSH está acessível, se o destino e as credenciais estão configurados, se a chave está autorizada e se a identidade do host consta em known_hosts. O status de ping pode divergir do SSH.</small></div>`;
   }
 }
 list.addEventListener('click', async event => {

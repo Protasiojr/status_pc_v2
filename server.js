@@ -11,11 +11,11 @@ const PORT = Number(process.env.PORT || 6001);
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error('PORT precisa ser um número entre 1 e 65535.');
 const ROOT = __dirname;
 const PUBLIC_FILES = new Set([
-  'index.html', 'app.js', 'styles.css', 'ssh-modal.css', 'power-actions.css',
+  'index.html', 'app.js', 'validation.js', 'styles.css', 'ssh-modal.css', 'power-actions.css',
   'info-modal.css', 'save-config.css', 'scan.css', 'map.css', 'mobile-menu.css',
   'responsive.css', 'import.css'
 ]);
-const DATA_DIR = path.join(ROOT, 'data');
+const DATA_DIR = process.env.STATUS_PC_DATA_DIR || path.join(ROOT, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'devices.json');
 const SSH_KEY = process.env.SSH_KEY_PATH || '';
 const SSH_KNOWN_HOSTS = process.env.SSH_KNOWN_HOSTS_PATH || path.join(os.homedir(), '.ssh', 'known_hosts');
