@@ -145,6 +145,7 @@ document.querySelector('#sshPrivateKeyDevice').addEventListener('input', event =
   if (event.currentTarget.value !== generatedPrivateKey) document.querySelector('#sshPublicKeyDevice').value = '';
   refreshSshInstallScript();
 });
+document.querySelector('#sshPublicKeyDevice').addEventListener('input', refreshSshInstallScript);
 document.querySelector('#generate-ssh-key').addEventListener('click', async event => {
   const button = event.currentTarget;
   const status = document.querySelector('#ssh-key-status');
