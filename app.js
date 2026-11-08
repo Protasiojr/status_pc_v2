@@ -238,6 +238,7 @@ document.querySelectorAll('.nav-link[data-view]').forEach(link => link.addEventL
   document.querySelector('#network-map-page').hidden = link.dataset.view !== 'network-map-page';
   if (link.dataset.view === 'network-map-page') renderNetworkMap();
   if (link.dataset.scroll) document.querySelector(`#${link.dataset.scroll}`).scrollIntoView({ behavior: 'smooth', block: 'start' });
+  link.closest('.mobile-menu')?.removeAttribute('open');
 }));
 async function showInfo(device) {
   const modal = bootstrap.Modal.getOrCreateInstance(document.querySelector('#info-modal'));
