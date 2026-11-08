@@ -23,9 +23,9 @@ function send(res, status, data, type = 'application/json; charset=utf-8') {
   res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' });
   res.end(type.startsWith('application/json') ? JSON.stringify(data) : data);
 }
-function getBody(req) {
+function getBody(req, maxBytes = 100_000) {
   return new Promise((resolve, reject) => {
-    let raw = ''; req.on('data', chunk => { raw += chunk; if (raw.length > 100_000) reject(new Error('Payload muito grande')); });
+    let raw = ''; req.on('data', chunk => { raw += chunk; if (Buffer.byteLength(raw) > maxBytes) reject(new Error('Payload muito grande')); });
     req.on('end', () => { try { resolve(JSON.parse(raw || '{}')); } catch { reject(new Error('JSON inválido')); } });
   });
 }
@@ -187,6 +187,38 @@ const server = http.createServer(async (req, res) => {
       const config = { app: 'STATUS PC v2', schemaVersion: 1, exportedAt: new Date().toISOString(), devices: readDevices() };
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': 'attachment; filename="status-pc-config.json"', 'Cache-Control': 'no-store' });
       return res.end(JSON.stringify(config, null, 2));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/config/import') {
+      const body = await getBody(req, 2_000_000);
+      const imported = Array.isArray(body) ? body : body.devices;
+      if (!Array.isArray(imported) || imported.length > 4096) return send(res, 400, { error: 'Arquivo inválido: esperado um JSON com até 4.096 dispositivos.' });
+      const normalized = [];
+      for (let i = 0; i < imported.length; i++) {
+        const item = imported[i];
+        if (!item || typeof item !== 'object') return send(res, 400, { error: `Configuração ${i + 1} inválida.` });
+        const name = String(item.name || '').trim().slice(0, 60);
+        const ip = String(item.ip || '').trim();
+        const mac = String(item.mac || '').trim();
+        const platform = item.platform;
+        const sshHost = String(item.sshHost || '').trim().slice(0, 100);
+        const sshPort = Number(item.sshPort || 22);
+        if (!name || !validIp(ip) || (mac && !validMac(mac)) || !['windows', 'linux'].includes(platform)) return send(res, 400, { error: `Configuração ${i + 1}: nome, IPv4, MAC ou sistema operacional inválido.` });
+        if (sshHost && !/^[\w.@-]{1,100}$/.test(sshHost)) return send(res, 400, { error: `Configuração ${i + 1}: destino SSH inválido.` });
+        if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65535) return send(res, 400, { error: `Configuração ${i + 1}: porta SSH inválida.` });
+        normalized.push({ id: /^[\w-]{1,80}$/.test(String(item.id || '')) ? String(item.id) : crypto.randomUUID(), name, ip, mac: validMac(mac) ? mac.toUpperCase().replace(/-/g, ':') : '', platform, sshHost, sshPort, broadcast: validIp(item.broadcast) ? item.broadcast : '255.255.255.255' });
+      }
+      const current = readDevices(); const ids = new Set(current.map(device => device.id));
+      let added = 0; let updated = 0;
+      for (const item of normalized) {
+        const index = current.findIndex(device => device.ip === item.ip);
+        if (index >= 0) { current[index] = { ...item, id: current[index].id }; updated++; }
+        else {
+          if (ids.has(item.id)) item.id = crypto.randomUUID();
+          ids.add(item.id); current.push(item); added++;
+        }
+      }
+      saveDevices(current);
+      return send(res, 200, { ok: true, added, updated, total: current.length });
     }
     if (req.method === 'GET' && url.pathname === '/api/devices') {
       const devices = readDevices();

@@ -24,6 +24,7 @@ Os dispositivos cadastrados ficam em `data/devices.json`.
 - Desligamento e reinício remotos de Windows e Linux via SSH com autenticação por chave.
 - Modal de informações do equipamento com inventário consultado via SSH (sistema, CPU, memória, discos, rede e dados de hardware disponíveis).
 - Botão para exportar as configurações dos dispositivos em um arquivo JSON.
+- Importação de configurações a partir de um arquivo JSON, mesclando por endereço IP.
 - Varredura das sub-redes IPv4 locais com ping concorrente e leitura da tabela ARP.
 - Mapa lógico da rede com grafo dos dispositivos cadastrados e encontrados no último Scan.
 

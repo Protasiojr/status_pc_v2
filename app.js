@@ -8,6 +8,7 @@ let scanDevices = [];
 let localAddresses = [];
 let selectedMapIp = '';
 let editingDeviceId = null;
+let importConfig = null;
 
 function notify(message) { document.querySelector('#toast-message').textContent = message; toast.show(); }
 async function api(url, options) {
@@ -97,6 +98,33 @@ document.querySelector('#save-config').addEventListener('click', async event => 
     document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(link.href);
     notify('Arquivo JSON das configurações baixado.');
   } catch (error) { notify(error.message); }
+  finally { button.disabled = false; }
+});
+const configFile = document.querySelector('#config-file');
+document.querySelector('#upload-config').addEventListener('click', () => { configFile.value = ''; configFile.click(); });
+configFile.addEventListener('change', async () => {
+  const file = configFile.files?.[0]; if (!file) return;
+  const errorBox = document.querySelector('#import-error'); errorBox.textContent = '';
+  if (!file.name.toLowerCase().endsWith('.json') || file.size > 1_500_000) { notify('Selecione um arquivo .json de até 1,5 MB.'); return; }
+  try {
+    const parsed = JSON.parse(await file.text());
+    const importedDevices = Array.isArray(parsed) ? parsed : parsed.devices;
+    if (!Array.isArray(importedDevices) || importedDevices.length > 4096) throw new Error('JSON inválido: não encontrei a lista de dispositivos ou ela excede 4.096 itens.');
+    importConfig = { devices: importedDevices };
+    document.querySelector('#import-filename').textContent = file.name;
+    document.querySelector('#import-count').textContent = `${importedDevices.length} dispositivo(s) no arquivo`;
+    bootstrap.Modal.getOrCreateInstance(document.querySelector('#import-modal')).show();
+  } catch (error) { notify(error.message.startsWith('JSON') ? error.message : 'O arquivo não contém um JSON válido.'); }
+});
+document.querySelector('#import-submit').addEventListener('click', async event => {
+  if (!importConfig) return;
+  const button = event.currentTarget; const errorBox = document.querySelector('#import-error');
+  button.disabled = true; errorBox.textContent = '';
+  try {
+    const result = await api('/api/config/import', { method: 'POST', body: JSON.stringify(importConfig) });
+    importConfig = null; bootstrap.Modal.getInstance(document.querySelector('#import-modal')).hide(); await refresh();
+    notify(`Importação concluída: ${result.added} adicionado(s), ${result.updated} atualizado(s).`);
+  } catch (error) { errorBox.textContent = error.message; }
   finally { button.disabled = false; }
 });
 document.querySelector('#device-form').addEventListener('submit', async event => {
