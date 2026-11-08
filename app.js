@@ -31,6 +31,68 @@ async function api(url, options) {
   return body;
 }
 function escapeHtml(value = '') { return String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function bashQuote(value) { return "'" + value.replace(/'/g, "'\\''") + "'"; }
+function windowsAuthorizedKeysScript(publicKey) {
+  const bytes = Array.from(new TextEncoder().encode(publicKey), byte => String.fromCharCode(byte)).join('');
+  const keyBase64 = btoa(bytes);
+  return [
+    '# Execute no PowerShell do Windows destino. Para contas Administrador, abra como administrador.',
+    "$publicKey = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + keyBase64 + "'))",
+    '$identity = [Security.Principal.WindowsIdentity]::GetCurrent()',
+    '$principal = [Security.Principal.WindowsPrincipal]::new($identity)',
+    '$isAdministrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)',
+    'if ($isAdministrator) {',
+    "    $sshDirectory = Join-Path $env:ProgramData 'ssh'",
+    "    $authorizedKeys = Join-Path $sshDirectory 'administrators_authorized_keys'",
+    '} else {',
+    "    $sshDirectory = Join-Path $env:USERPROFILE '.ssh'",
+    "    $authorizedKeys = Join-Path $sshDirectory 'authorized_keys'",
+    '}',
+    'New-Item -ItemType Directory -Force -Path $sshDirectory | Out-Null',
+    'if (-not (Test-Path -LiteralPath $authorizedKeys)) { New-Item -ItemType File -Path $authorizedKeys -Force | Out-Null }',
+    'if (-not (Select-String -LiteralPath $authorizedKeys -SimpleMatch -Pattern $publicKey -Quiet -ErrorAction SilentlyContinue)) { Add-Content -LiteralPath $authorizedKeys -Value $publicKey -Encoding ascii }',
+    'if ($isAdministrator) {',
+    "    & icacls.exe $authorizedKeys /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F' | Out-Null",
+    '} else {',
+    '    $userSid = $identity.User.Value',
+    '    & icacls.exe $sshDirectory /inheritance:r /grant ("*" + $userSid + ":(OI)(CI)F") "*S-1-5-18:(OI)(CI)F" | Out-Null',
+    '    & icacls.exe $authorizedKeys /inheritance:r /grant ("*" + $userSid + ":F") "*S-1-5-18:F" | Out-Null',
+    '}',
+    'Write-Host "Chave pública instalada em $authorizedKeys"'
+  ].join('\n');
+}
+function linuxAuthorizedKeysScript(publicKey) {
+  const key = bashQuote(publicKey);
+  return [
+    '#!/bin/sh',
+    'set -eu',
+    'mkdir -p "$HOME/.ssh"',
+    'chmod 700 "$HOME/.ssh"',
+    'touch "$HOME/.ssh/authorized_keys"',
+    'key=' + key,
+    'grep -Fqx -- "$key" "$HOME/.ssh/authorized_keys" || printf \'%s\\n\' "$key" >> "$HOME/.ssh/authorized_keys"',
+    'chmod 600 "$HOME/.ssh/authorized_keys"'
+  ].join('\n');
+}
+function refreshSshInstallScript() {
+  const publicKey = document.querySelector('#sshPublicKeyDevice').value.trim();
+  const section = document.querySelector('#ssh-install-script-section');
+  const script = document.querySelector('#ssh-install-script');
+  const platform = document.querySelector('#platform').value;
+  if (!publicKey || !['linux', 'windows'].includes(platform)) {
+    section.hidden = true;
+    script.value = '';
+    return;
+  }
+  script.value = platform === 'windows' ? windowsAuthorizedKeysScript(publicKey) : linuxAuthorizedKeysScript(publicKey);
+  document.querySelector('#ssh-install-script-title').textContent = platform === 'windows'
+    ? 'Script PowerShell: instalar a chave pública no Windows'
+    : 'Script Bash: instalar a chave pública no Linux';
+  document.querySelector('#ssh-install-script-hint').textContent = platform === 'windows'
+    ? 'Execute no Windows destino como o mesmo usuário SSH. Para uma conta Administrador, abra o PowerShell como administrador.'
+    : 'Execute no Linux destino como o mesmo usuário informado no destino SSH.';
+  section.hidden = false;
+}
 function render() {
   const query = document.querySelector('#search').value.trim().toLowerCase();
   const visible = devices.filter(d => `${d.name} ${d.ip} ${d.mac}`.toLowerCase().includes(query));
@@ -54,6 +116,8 @@ function prepareDeviceModal(device = null) {
   const form = document.querySelector('#device-form'); form.reset();
   form.querySelectorAll('input, textarea').forEach(field => { field.setCustomValidity(''); field.classList.remove('is-invalid'); field.removeAttribute('aria-invalid'); });
   generatedPrivateKey = '';
+  document.querySelector('#ssh-install-script-section').hidden = true;
+  document.querySelector('#ssh-install-script').value = '';
   document.querySelector('#form-error').textContent = '';
   document.querySelector('#ssh-test-result').textContent = '';
   document.querySelector('#ssh-key-status').textContent = device?.sshPrivateKeyConfigured ? 'Chave privada salva; deixe o campo vazio para mantê-la.' : '';
@@ -73,10 +137,13 @@ function prepareDeviceModal(device = null) {
     document.querySelector('#sshKeyPathDevice').value = device.sshKeyPath || '';
     document.querySelector('#sshPublicKeyDevice').value = device.sshPublicKey || '';
   }
+  refreshSshInstallScript();
 }
 document.querySelector('.add-button').addEventListener('click', () => prepareDeviceModal());
+document.querySelector('#platform').addEventListener('change', refreshSshInstallScript);
 document.querySelector('#sshPrivateKeyDevice').addEventListener('input', event => {
   if (event.currentTarget.value !== generatedPrivateKey) document.querySelector('#sshPublicKeyDevice').value = '';
+  refreshSshInstallScript();
 });
 document.querySelector('#generate-ssh-key').addEventListener('click', async event => {
   const button = event.currentTarget;
@@ -89,9 +156,22 @@ document.querySelector('#generate-ssh-key').addEventListener('click', async even
     document.querySelector('#sshPrivateKeyDevice').value = pair.privateKey;
     document.querySelector('#sshKeyPathDevice').value = '';
     document.querySelector('#sshPublicKeyDevice').value = pair.publicKey;
-    status.textContent = 'Copie a chave pública para authorized_keys do equipamento remoto.';
+    refreshSshInstallScript();
+    status.textContent = 'Par Ed25519 gerado pelo servidor STATUS PC. Use o script abaixo para autorizar a chave pública no equipamento.';
   } catch (error) { status.textContent = error.message; }
   finally { button.disabled = false; }
+});
+document.querySelector('#copy-ssh-install-script').addEventListener('click', async () => {
+  const script = document.querySelector('#ssh-install-script');
+  try {
+    await navigator.clipboard.writeText(script.value);
+  } catch {
+    script.focus();
+    script.select();
+    document.execCommand('copy');
+    script.setSelectionRange(0, 0);
+  }
+  document.querySelector('#ssh-install-script-status').textContent = 'Script copiado.';
 });
 document.querySelector('#test-ssh').addEventListener('click', async event => {
   const button = event.currentTarget;
