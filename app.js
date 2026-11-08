@@ -41,6 +41,20 @@ function windowsAuthorizedKeysScript(publicKey) {
     '$identity = [Security.Principal.WindowsIdentity]::GetCurrent()',
     '$principal = [Security.Principal.WindowsPrincipal]::new($identity)',
     '$isAdministrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)',
+    'if (-not $isAdministrator) { throw "Abra o PowerShell como Administrador e execute novamente." }',
+    "$capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'",
+    "if ($capability.State -ne 'Installed') { Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-Null }",
+    "$sshKeygen = Join-Path $env:WINDIR 'System32\\OpenSSH\\ssh-keygen.exe'",
+    'if (-not (Test-Path -LiteralPath $sshKeygen)) { throw "OpenSSH Server não foi instalado corretamente." }',
+    '& $sshKeygen -A',
+    'if ($LASTEXITCODE -ne 0) { throw "Não foi possível gerar as chaves de identidade do servidor SSH." }',
+    'Set-Service -Name sshd -StartupType Automatic',
+    "$firewallRule = Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue",
+    'if ($null -eq $firewallRule) {',
+    '    New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null',
+    '} else {',
+    "    Enable-NetFirewallRule -Name 'OpenSSH-Server-In-TCP'",
+    '}',
     'if ($isAdministrator) {',
     "    $sshDirectory = Join-Path $env:ProgramData 'ssh'",
     "    $authorizedKeys = Join-Path $sshDirectory 'administrators_authorized_keys'",
@@ -58,7 +72,11 @@ function windowsAuthorizedKeysScript(publicKey) {
     '    & icacls.exe $sshDirectory /inheritance:r /grant ("*" + $userSid + ":(OI)(CI)F") "*S-1-5-18:(OI)(CI)F" | Out-Null',
     '    & icacls.exe $authorizedKeys /inheritance:r /grant ("*" + $userSid + ":F") "*S-1-5-18:F" | Out-Null',
     '}',
-    'Write-Host "Chave pública instalada em $authorizedKeys"'
+    'Write-Host "Chave pública da aplicação instalada em $authorizedKeys"',
+    'Start-Service -Name sshd',
+    'Get-Service -Name sshd | Select-Object Name, Status, StartType',
+    'Write-Host "Impressão digital da chave de host do Windows (confirme e cadastre no known_hosts do STATUS PC):"',
+    '& $sshKeygen -lf (Join-Path $sshDirectory "ssh_host_ed25519_key.pub")'
   ].join('\n');
 }
 function linuxAuthorizedKeysScript(publicKey) {
@@ -86,10 +104,10 @@ function refreshSshInstallScript() {
   }
   script.value = platform === 'windows' ? windowsAuthorizedKeysScript(publicKey) : linuxAuthorizedKeysScript(publicKey);
   document.querySelector('#ssh-install-script-title').textContent = platform === 'windows'
-    ? 'Script PowerShell: instalar a chave pública no Windows'
+    ? 'Script PowerShell: configurar SSH e autorizar a chave no Windows'
     : 'Script Bash: instalar a chave pública no Linux';
   document.querySelector('#ssh-install-script-hint').textContent = platform === 'windows'
-    ? 'Execute no Windows destino como o mesmo usuário SSH. Para uma conta Administrador, abra o PowerShell como administrador.'
+    ? 'Execute no Windows destino em PowerShell como Administrador; ativa sshd, libera a porta 22, gera as chaves do host e instala a chave pública da aplicação.'
     : 'Execute no Linux destino como o mesmo usuário informado no destino SSH.';
   section.hidden = false;
 }
