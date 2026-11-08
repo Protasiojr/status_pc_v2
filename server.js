@@ -10,6 +10,7 @@ const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'devices.json');
 const SSH_KEY = process.env.SSH_KEY_PATH || '';
+let scanInProgress = false;
 fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, '[]');
 
@@ -35,6 +36,71 @@ function ping(ip) {
     const windows = process.platform === 'win32';
     execFile(windows ? 'ping.exe' : 'ping', windows ? ['-n', '1', '-w', '1200', ip] : ['-c', '1', '-W', '2', ip], { timeout: 3000, windowsHide: true }, err => resolve(!err));
   });
+}
+function ipv4Number(ip) { return ip.split('.').reduce((value, part) => ((value << 8) | Number(part)) >>> 0, 0); }
+function ipv4Text(value) { return [value >>> 24, (value >>> 16) & 255, (value >>> 8) & 255, value & 255].join('.'); }
+function discoverRanges() {
+  const ranges = [];
+  for (const iface of Object.values(os.networkInterfaces()).flat().filter(item => item && item.family === 'IPv4' && !item.internal && validIp(item.address) && validIp(item.netmask))) {
+    const address = ipv4Number(iface.address); const mask = ipv4Number(iface.netmask);
+    const network = (address & mask) >>> 0; const broadcast = (network | (~mask >>> 0)) >>> 0;
+    const count = broadcast - network - 1;
+    if (count < 1) continue;
+    ranges.push({ address: iface.address, broadcast: ipv4Text(broadcast), network, first: network + 1, last: broadcast - 1, count });
+  }
+  return ranges;
+}
+function scanPing(ip) {
+  return new Promise(resolve => {
+    const windows = process.platform === 'win32';
+    execFile(windows ? 'ping.exe' : 'ping', windows ? ['-n', '1', '-w', '800', ip] : ['-c', '1', '-W', '1', ip], { timeout: 1800, windowsHide: true }, error => resolve(!error));
+  });
+}
+function readArpTable() {
+  return new Promise(resolve => {
+    const windows = process.platform === 'win32';
+    execFile(windows ? 'arp.exe' : 'ip', windows ? ['-a'] : ['neigh', 'show'], { timeout: 3000, windowsHide: true }, (_error, stdout) => {
+      const found = new Map();
+      for (const line of stdout.split(/\r?\n/)) {
+        const match = windows
+          ? line.match(/\b((?:\d{1,3}\.){3}\d{1,3})\s+((?:[\da-f]{2}[:-]){5}[\da-f]{2})\b/i)
+          : line.match(/\b((?:\d{1,3}\.){3}\d{1,3})\s+dev\s+([^ ]+).*?lladdr\s+(([\da-f]{2}:){5}[\da-f]{2})/i);
+        if (match && validIp(match[1])) found.set(match[1], { mac: match[windows ? 2 : 3].toUpperCase().replace(/-/g, ':'), interface: windows ? '' : match[2] });
+      }
+      resolve(found);
+    });
+  });
+}
+async function scanLan() {
+  const ranges = discoverRanges();
+  if (!ranges.length) throw new Error('Não encontrei uma interface IPv4 local para varrer.');
+  const targets = []; const maxTargets = 8192;
+  let truncated = false;
+  for (const range of ranges) {
+    for (let n = range.first; n <= range.last; n++) {
+      if (ipv4Text(n) === range.address) continue;
+      if (targets.length >= maxTargets) { truncated = true; break; }
+      targets.push({ ip: ipv4Text(n), broadcast: range.broadcast });
+    }
+    if (truncated) break;
+  }
+  const responding = new Set(); let cursor = 0;
+  const workers = Array.from({ length: Math.min(128, targets.length) }, async () => {
+    while (cursor < targets.length) {
+      const item = targets[cursor++];
+      if (await scanPing(item.ip)) responding.add(item.ip);
+    }
+  });
+  await Promise.all(workers);
+  const arp = await readArpTable();
+  const targetMap = new Map(targets.map(item => [item.ip, item]));
+  const foundIps = new Set(responding);
+  for (const [ip, entry] of arp) if (targetMap.has(ip) && entry.mac) foundIps.add(ip);
+  const devices = Array.from(foundIps).sort((a, b) => ipv4Number(a) - ipv4Number(b)).map(ip => ({
+    ip, mac: arp.get(ip)?.mac || '', interface: arp.get(ip)?.interface || '', broadcast: targetMap.get(ip)?.broadcast || '', online: responding.has(ip),
+    source: responding.has(ip) ? (arp.has(ip) ? 'ping+arp' : 'ping') : 'arp'
+  }));
+  return { devices, scanned: targets.length, truncated, subnets: ranges.map(range => ({ address: range.address, broadcast: range.broadcast, hosts: range.count })) };
 }
 function wake(mac, broadcast = '255.255.255.255') {
   const bytes = Buffer.from(mac.replace(/[:-]/g, ''), 'hex');
@@ -111,6 +177,12 @@ function remoteInfo(device) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   try {
+    if (req.method === 'POST' && url.pathname === '/api/scan') {
+      if (scanInProgress) return send(res, 409, { error: 'Já existe uma varredura em andamento.' });
+      scanInProgress = true;
+      try { return send(res, 200, await scanLan()); }
+      finally { scanInProgress = false; }
+    }
     if (req.method === 'GET' && url.pathname === '/api/config/export') {
       const config = { app: 'STATUS PC v2', schemaVersion: 1, exportedAt: new Date().toISOString(), devices: readDevices() };
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': 'attachment; filename="status-pc-config.json"', 'Cache-Control': 'no-store' });
@@ -124,9 +196,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/devices') {
       const body = await getBody(req);
       const name = String(body.name || '').trim().slice(0, 60);
-      if (!name || !validIp(body.ip) || !validMac(body.mac)) return send(res, 400, { error: 'Informe nome, IPv4 e MAC válidos.' });
+      if (!name || !validIp(body.ip) || (body.mac && !validMac(body.mac))) return send(res, 400, { error: 'Informe nome e IPv4 válidos; se preencher MAC, ele precisa ser válido.' });
       const devices = readDevices();
-      const item = { id: crypto.randomUUID(), name, ip: body.ip, mac: body.mac.toUpperCase().replace(/-/g, ':'), platform: ['windows', 'linux'].includes(body.platform) ? body.platform : 'windows', sshHost: String(body.sshHost || '').trim().slice(0, 100), sshPort: Number.isInteger(Number(body.sshPort)) && Number(body.sshPort) >= 1 && Number(body.sshPort) <= 65535 ? Number(body.sshPort) : 22, broadcast: validIp(body.broadcast) ? body.broadcast : '255.255.255.255' };
+      const item = { id: crypto.randomUUID(), name, ip: body.ip, mac: validMac(body.mac) ? body.mac.toUpperCase().replace(/-/g, ':') : '', platform: ['windows', 'linux'].includes(body.platform) ? body.platform : 'windows', sshHost: String(body.sshHost || '').trim().slice(0, 100), sshPort: Number.isInteger(Number(body.sshPort)) && Number(body.sshPort) >= 1 && Number(body.sshPort) <= 65535 ? Number(body.sshPort) : 22, broadcast: validIp(body.broadcast) ? body.broadcast : '255.255.255.255' };
       devices.push(item); saveDevices(devices); return send(res, 201, item);
     }
     const match = url.pathname.match(/^\/api\/devices\/([\w-]+)(?:\/(wake|shutdown|restart|info))?$/);
@@ -144,7 +216,7 @@ const server = http.createServer(async (req, res) => {
         saveDevices(devices);
         return send(res, 200, { ok: true, device: devices[index] });
       }
-      if (req.method === 'POST' && match[2] === 'wake') { await wake(devices[index].mac, devices[index].broadcast); return send(res, 200, { ok: true }); }
+      if (req.method === 'POST' && match[2] === 'wake') { if (!validMac(devices[index].mac)) return send(res, 400, { error: 'Este dispositivo não tem endereço MAC cadastrado para Wake-on-LAN.' }); await wake(devices[index].mac, devices[index].broadcast); return send(res, 200, { ok: true }); }
       if (req.method === 'POST' && ['shutdown', 'restart'].includes(match[2])) { await remotePower(devices[index], match[2]); return send(res, 200, { ok: true }); }
       if (req.method === 'POST' && match[2] === 'info') { const info = await remoteInfo(devices[index]); return send(res, 200, { info, collectedAt: new Date().toISOString() }); }
     }

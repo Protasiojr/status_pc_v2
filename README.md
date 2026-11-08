@@ -23,6 +23,8 @@ Os dispositivos cadastrados ficam em `data/devices.json`.
 - Desligamento e reinício remotos de Windows e Linux via SSH com autenticação por chave.
 - Modal de informações do equipamento com inventário consultado via SSH (sistema, CPU, memória, discos, rede e dados de hardware disponíveis).
 - Botão para exportar as configurações dos dispositivos em um arquivo JSON.
+- Varredura das sub-redes IPv4 locais com ping concorrente e leitura da tabela ARP.
+- Mapa lógico da rede com grafo dos dispositivos cadastrados e encontrados no último Scan.
 
 ## Desligamento por SSH
 
@@ -34,4 +36,4 @@ O status depende de ICMP estar permitido pelo firewall do dispositivo. Wake-on-L
 
 ## Segurança e uso
 
-Use somente em uma rede confiável. A API não inclui autenticação de usuários; mantenha a porta acessível apenas na LAN e não publique o serviço diretamente na internet. A aplicação não faz varredura ativa de toda a sub-rede: ela monitora os IPs cadastrados pelo usuário.
+Use somente em uma rede confiável. A API não inclui autenticação de usuários; mantenha a porta acessível apenas na LAN e não publique o serviço diretamente na internet. O botão Scan consulta até 8.192 endereços IPv4 por operação, conforme as máscaras das interfaces locais. A detecção depende de ping ou tabela ARP; firewalls e isolamento de clientes Wi-Fi podem ocultar dispositivos.
