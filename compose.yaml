@@ -4,7 +4,8 @@ services:
     image: status-pc-v2:latest
     container_name: status-pc-v2
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "6001:6001"
     env_file:
       - .env
     environment:
