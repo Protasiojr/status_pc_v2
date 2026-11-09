@@ -34,6 +34,18 @@ docker compose up -d --build
 
 Preserve `.env` entre reinicializações e backups; sem o mesmo segredo, as senhas e chaves privadas salvas não podem ser descriptografadas. Os dispositivos e arquivos SSH ficam em `data/`, montada no contêiner e pertencente ao usuário UID 1000 (`node`).
 
+### Inventário Windows pelo Microsoft Intune
+
+O botão **Info** consulta o Microsoft Graph para dispositivos Windows quando as três variáveis abaixo estão configuradas. O aplicativo Entra ID precisa de permissão de aplicação `DeviceManagementManagedDevices.Read.All` no Microsoft Graph, com consentimento de administrador. O dispositivo do Intune deve ter o mesmo nome do card cadastrado no STATUS PC. Sem essas variáveis, o botão continua consultando o computador por SSH.
+
+```env
+INTUNE_TENANT_ID=ID-do-tenant
+INTUNE_CLIENT_ID=ID-da-aplicacao
+INTUNE_CLIENT_SECRET=segredo-da-aplicacao
+```
+
+Mantenha `INTUNE_CLIENT_SECRET` apenas no `.env` do servidor e proteja esse arquivo (permissão `600`). A consulta retorna dados de inventário disponíveis no Intune, como versão do Windows, fabricante, modelo, serial, estado de conformidade, usuário principal, sincronização e armazenamento. O inventário do Intune depende da última sincronização do dispositivo e não substitui uma consulta em tempo real.
+
 No cadastro, gere o par Ed25519 que o STATUS PC usará como cliente SSH. O formulário oferece um script Bash para autorizar a chave em Linux ou PowerShell para Windows. No Windows, execute o script elevado: ele instala o OpenSSH Server se necessário, gera as chaves de identidade do host, inicia o serviço sshd, libera a porta 22, instala a chave pública da aplicação em administrators_authorized_keys e aplica as ACLs do OpenSSH. Compare a impressão digital exibida com a chave apresentada ao Linux antes de confiar no host. Também pode usar uma chave existente: coloque-a em data/ssh/ e informe /app/data/ssh/nome-da-chave no formulário. Coloque os hosts confiáveis em data/ssh/known_hosts; a validação da identidade SSH permanece habilitada. A senha também pode ser usada como passphrase de uma chave criptografada.
 
 O servidor STATUS PC pode rodar diretamente em Node no Linux ou Windows. O Compose executa o app em um contêiner Linux; os caminhos de chave no formulário devem ser caminhos visíveis dentro dele, como `/app/data/ssh/id_ed25519`.

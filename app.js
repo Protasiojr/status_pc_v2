@@ -330,7 +330,7 @@ document.querySelector('#ssh-form').addEventListener('submit', async event => {
   } catch (error) { errorBox.textContent = error.message; }
   finally { submit.disabled = false; }
 });
-const infoLabels = { registeredName: 'Nome no painel', ip: 'Endereço IP cadastrado', mac: 'MAC cadastrado', platform: 'Sistema cadastrado', hostname: 'Hostname', os: 'Sistema operacional', version: 'Versão', build: 'Build', architecture: 'Arquitetura', kernel: 'Kernel', uptime: 'Tempo ligado', lastBoot: 'Última inicialização', cpu: 'Processador', cores: 'Núcleos físicos', logicalProcessors: 'Processadores lógicos', memoryGB: 'Memória RAM total (GB)', memoryAvailableGB: 'Memória RAM disponível (GB)', memory: 'Memória RAM', swap: 'Memória Swap', disks: 'Discos e partições', network: 'Interfaces e IPv4', macs: 'Interfaces e endereços MAC', manufacturer: 'Fabricante', model: 'Modelo', domain: 'Domínio ou grupo', bios: 'BIOS/UEFI', serial: 'Número de série', gpu: 'Placa(s) de vídeo', load: 'Carga do sistema', processes: 'Processos em execução', collectedAt: 'Consultado em' };
+const infoLabels = { registeredName: 'Nome no painel', ip: 'Endereço IP cadastrado', mac: 'MAC cadastrado', platform: 'Sistema cadastrado', source: 'Origem do inventário', hostname: 'Hostname', os: 'Sistema operacional', version: 'Versão', build: 'Build', architecture: 'Arquitetura', kernel: 'Kernel', uptime: 'Tempo ligado', lastBoot: 'Última inicialização', cpu: 'Processador', cores: 'Núcleos físicos', logicalProcessors: 'Processadores lógicos', memoryGB: 'Memória RAM total (GB)', memoryAvailableGB: 'Memória RAM disponível (GB)', memory: 'Memória RAM', swap: 'Memória Swap', disks: 'Discos e partições', network: 'Interfaces e IPv4', macs: 'Interfaces e endereços MAC', manufacturer: 'Fabricante', model: 'Modelo', domain: 'Domínio ou grupo', bios: 'BIOS/UEFI', serial: 'Número de série', imei: 'IMEI', ownership: 'Propriedade', managementAgent: 'Agente de gerenciamento', complianceState: 'Conformidade', lastSync: 'Última sincronização', enrolledAt: 'Inscrição no gerenciamento', enrollmentType: 'Tipo de inscrição', user: 'Usuário principal', wifiMac: 'MAC Wi-Fi', ethernetMac: 'MAC Ethernet', skuFamily: 'Família do Windows', storageTotalGB: 'Armazenamento total (GB)', storageFreeGB: 'Armazenamento livre (GB)', intuneDeviceId: 'ID do dispositivo no Intune', azureADDeviceId: 'ID do dispositivo no Entra ID', gpu: 'Placa(s) de vídeo', load: 'Carga do sistema', processes: 'Processos em execução', collectedAt: 'Consultado em' };
 function formatInfo(value) {
   if (value === null || value === undefined || value === '') return 'Não informado';
   if (Array.isArray(value)) return value.length ? value.map(item => typeof item === 'object' ? Object.entries(item).map(([k, v]) => `${k}: ${formatInfo(v)}`).join(' · ') : String(item)).join('\n') : 'Nenhum';
@@ -405,14 +405,14 @@ async function showInfo(device) {
   const modal = bootstrap.Modal.getOrCreateInstance(document.querySelector('#info-modal'));
   document.querySelector('#info-device-label').textContent = `${device.name} · ${device.ip}`;
   const content = document.querySelector('#info-content');
-  content.innerHTML = '<div class="info-loading"><span class="spinner-border spinner-border-sm"></span> Consultando o equipamento por SSH...</div>';
+  content.innerHTML = '<div class="info-loading"><span class="spinner-border spinner-border-sm"></span> Consultando inventário do Windows no Intune ou do equipamento por SSH...</div>';
   modal.show();
   try {
     const result = await api(`/api/devices/${device.id}/info`, { method: 'POST' });
     const details = { registeredName: device.name, ip: device.ip, mac: device.mac, platform: device.platform === 'linux' ? 'Linux' : 'Windows', ...result.info, collectedAt: new Date(result.collectedAt).toLocaleString('pt-BR') };
     content.innerHTML = Object.entries(details).map(([key, value]) => `<div class="info-item"><span>${escapeHtml(infoLabels[key] || key)}</span><strong>${escapeHtml(formatInfo(value))}</strong></div>`).join('');
   } catch (error) {
-    content.innerHTML = `<div class="info-error"><i class="bi bi-exclamation-circle"></i><strong>Não foi possível consultar o equipamento</strong><p>${escapeHtml(error.message)}</p><small>Confirme se o SSH está acessível, se o destino e as credenciais estão configurados, se a chave está autorizada e se a identidade do host consta em known_hosts. O status de ping pode divergir do SSH.</small></div>`;
+    content.innerHTML = `<div class="info-error"><i class="bi bi-exclamation-circle"></i><strong>Não foi possível consultar o equipamento</strong><p>${escapeHtml(error.message)}</p><small>Para consultar o Intune, confira as variáveis INTUNE_* e a permissão Microsoft Graph DeviceManagementManagedDevices.Read.All com consentimento de administrador. Sem Intune configurado, confira o SSH e known_hosts.</small></div>`;
   }
 }
 list.addEventListener('click', async event => {

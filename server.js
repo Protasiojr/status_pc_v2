@@ -22,6 +22,9 @@ const SSH_KNOWN_HOSTS = process.env.SSH_KNOWN_HOSTS_PATH || path.join(os.homedir
 const SSH_CREDENTIALS_KEY = process.env.SSH_CREDENTIALS_SECRET
   ? crypto.scryptSync(process.env.SSH_CREDENTIALS_SECRET, 'status-pc-ssh-password-v1', 32)
   : null;
+const INTUNE_TENANT_ID = process.env.INTUNE_TENANT_ID || '';
+const INTUNE_CLIENT_ID = process.env.INTUNE_CLIENT_ID || '';
+const INTUNE_CLIENT_SECRET = process.env.INTUNE_CLIENT_SECRET || '';
 let scanInProgress = false;
 fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, '[]');
@@ -317,6 +320,47 @@ function remoteInfo(device) {
   });
 }
 
+async function intuneInfo(device) {
+  if (!INTUNE_TENANT_ID || !INTUNE_CLIENT_ID || !INTUNE_CLIENT_SECRET) return null;
+  const tokenResponse = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(INTUNE_TENANT_ID)}/oauth2/v2.0/token`, {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: INTUNE_CLIENT_ID, client_secret: INTUNE_CLIENT_SECRET, scope: 'https://graph.microsoft.com/.default', grant_type: 'client_credentials' })
+  });
+  const tokenBody = await tokenResponse.json().catch(() => ({}));
+  if (!tokenResponse.ok || !tokenBody.access_token) throw new Error(`Falha na autenticação do Microsoft Graph${tokenBody.error_description ? `: ${tokenBody.error_description}` : '.'}`);
+  const filter = `deviceName eq '${String(device.name).replace(/'/g, "''")}'`;
+  const select = 'id,deviceName,azureADDeviceId,operatingSystem,osVersion,manufacturer,model,serialNumber,imei,managedDeviceOwnerType,managementAgent,lastSyncDateTime,enrolledDateTime,complianceState,wiFiMacAddress,userPrincipalName,deviceEnrollmentType,freeStorageSpaceInBytes,totalStorageSpaceInBytes';
+  const url = new URL('https://graph.microsoft.com/v1.0/deviceManagement/managedDevices');
+  url.searchParams.set('$filter', filter); url.searchParams.set('$select', select); url.searchParams.set('$top', '2');
+  const response = await fetch(url, { headers: { authorization: `Bearer ${tokenBody.access_token}` } });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = body.error?.message || '';
+    throw new Error(`Falha ao consultar inventário do Intune (HTTP ${response.status})${detail ? `: ${detail}` : '.'}`);
+  }
+  const match = (body.value || []).find(item => String(item.deviceName || '').toLowerCase() === String(device.name).toLowerCase());
+  if (!match) throw new Error(`O Intune não encontrou um dispositivo chamado “${device.name}”. Confira o nome cadastrado no card.`);
+  let hardware = {};
+  try {
+    const detailUrl = new URL(`https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/${encodeURIComponent(match.id)}`);
+    detailUrl.searchParams.set('$select', 'ethernetMacAddress,physicalMemoryInBytes');
+    const detailResponse = await fetch(detailUrl, { headers: { authorization: `Bearer ${tokenBody.access_token}` } });
+    if (detailResponse.ok) hardware = await detailResponse.json().catch(() => ({}));
+  } catch { /* Os dados básicos do inventário ainda são úteis sem os campos opcionais de hardware. */ }
+  return {
+    source: 'Microsoft Intune', intuneDeviceId: match.id, azureADDeviceId: match.azureADDeviceId,
+    hostname: match.deviceName, os: match.operatingSystem, version: match.osVersion,
+    manufacturer: match.manufacturer, model: match.model, serial: match.serialNumber,
+    imei: match.imei, ownership: match.managedDeviceOwnerType, managementAgent: match.managementAgent,
+    complianceState: match.complianceState, lastSync: match.lastSyncDateTime,
+    enrolledAt: match.enrolledDateTime, enrollmentType: match.deviceEnrollmentType,
+    user: match.userPrincipalName, wifiMac: match.wiFiMacAddress, ethernetMac: hardware.ethernetMacAddress,
+    memoryGB: Number.isFinite(hardware.physicalMemoryInBytes) ? +(hardware.physicalMemoryInBytes / 1024 ** 3).toFixed(1) : undefined,
+    storageTotalGB: Number.isFinite(match.totalStorageSpaceInBytes) ? +(match.totalStorageSpaceInBytes / 1024 ** 3).toFixed(1) : undefined,
+    storageFreeGB: Number.isFinite(match.freeStorageSpaceInBytes) ? +(match.freeStorageSpaceInBytes / 1024 ** 3).toFixed(1) : undefined
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', 'http://localhost');
@@ -479,7 +523,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'POST' && match[2] === 'wake') { if (!validMac(devices[index].mac)) return send(res, 400, { error: 'Este dispositivo não tem endereço MAC cadastrado para Wake-on-LAN.' }); await wake(devices[index].mac, devices[index].broadcast); return send(res, 200, { ok: true }); }
       if (req.method === 'POST' && ['shutdown', 'restart'].includes(match[2])) { await remotePower(devices[index], match[2]); return send(res, 200, { ok: true }); }
-      if (req.method === 'POST' && match[2] === 'info') { const info = await remoteInfo(devices[index]); return send(res, 200, { info, collectedAt: new Date().toISOString() }); }
+      if (req.method === 'POST' && match[2] === 'info') { const info = devices[index].platform === 'windows' && INTUNE_TENANT_ID && INTUNE_CLIENT_ID && INTUNE_CLIENT_SECRET ? await intuneInfo(devices[index]) : await remoteInfo(devices[index]); return send(res, 200, { info, collectedAt: new Date().toISOString() }); }
     }
     if (req.method === 'GET' && !url.pathname.startsWith('/api/')) {
       const requested = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
