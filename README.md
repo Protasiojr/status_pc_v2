@@ -38,6 +38,8 @@ Preserve `.env` entre reinicializações e backups; sem o mesmo segredo, as senh
 
 O botão **Info** consulta o Microsoft Graph para dispositivos Windows quando as três variáveis abaixo estão configuradas. O aplicativo Entra ID precisa de permissão de aplicação `DeviceManagementManagedDevices.Read.All` no Microsoft Graph, com consentimento de administrador. O dispositivo do Intune deve ter o mesmo nome do card cadastrado no STATUS PC. Sem essas variáveis, o botão continua consultando o computador por SSH.
 
+Para dispositivos Android, selecione **Android** no cadastro. O botão **Info** consulta o Intune quando o aparelho está gerenciado e, caso contrário, usa Nmap para identificar hostname reverso, fabricante pelo endereço MAC e serviços/portas TCP expostos. O Nmap também é incluído nas imagens Docker. Em instalações diretas no Linux, instale o pacote `nmap` (`sudo apt install nmap` no Ubuntu/Debian); sem ele, o app usa uma sonda TCP nativa de portas comuns. Android não expõe por padrão versão do sistema, modelo, serial, CPU ou memória pela rede. Para inventário completo, use um MDM como Intune. A porta ADB 5555 só é exibida como serviço de rede se estiver aberta; isso não habilita nem autentica ADB.
+
 ```env
 INTUNE_TENANT_ID=ID-do-tenant
 INTUNE_CLIENT_ID=ID-da-aplicacao
@@ -54,11 +56,11 @@ O servidor STATUS PC pode rodar diretamente em Node no Linux ou Windows. O Compo
 
 - Status online/offline com verificação ICMP, atualizado a cada 15 segundos.
 - Ligar via Wake-on-LAN (WoL), por pacote UDP broadcast para a porta 9. SSH não consegue iniciar um computador que está desligado.
-- Cadastro e remoção de dispositivos Windows e Linux.
+- Cadastro e remoção de dispositivos Windows, Linux e Android.
 - Edição de nome, IP, MAC, sistema operacional, broadcast e destino/porta SSH dos dispositivos.
 - Interface responsiva em tema escuro com Bootstrap e Bootstrap Icons via CDN.
 - Desligamento e reinício remotos de Windows e Linux via SSH com autenticação por senha ou chave privada.
-- Modal de informações do equipamento com inventário consultado via SSH (sistema, CPU, memória, discos, rede e dados de hardware disponíveis).
+- Modal de informações do equipamento com inventário via SSH (Windows/Linux), Intune (Windows/Android) ou descoberta de serviços de rede por Nmap (Android).
 - Botão para exportar as configurações dos dispositivos em um arquivo JSON.
 - Importação de configurações a partir de um arquivo JSON, mesclando por endereço IP.
 - Varredura das sub-redes IPv4 locais com ping concorrente e leitura da tabela ARP.

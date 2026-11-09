@@ -97,6 +97,23 @@ function refreshSshInstallScript() {
   const section = document.querySelector('#ssh-install-script-section');
   const script = document.querySelector('#ssh-install-script');
   const platform = document.querySelector('#platform').value;
+  const android = platform === 'android';
+  let androidHint = document.querySelector('#android-info-hint');
+  if (!androidHint) {
+    androidHint = document.createElement('p'); androidHint.id = 'android-info-hint'; androidHint.className = 'form-hint';
+    document.querySelector('#platform').closest('.row').after(androidHint);
+  }
+  androidHint.textContent = 'Android: o botão Info consulta dados visíveis na rede por Nmap. Não precisa de SSH; versão, modelo e número de série não são expostos por padrão.';
+  androidHint.hidden = !android;
+  const sshFields = [
+    document.querySelector('#sshHost').closest('.row'), document.querySelector('.ssh-key-generate-row'),
+    document.querySelector('label[for="sshPasswordDevice"]'), document.querySelector('#sshPasswordDevice'), document.querySelector('#clearSshPassword').parentElement,
+    document.querySelector('label[for="sshKeyPathDevice"]'), document.querySelector('#sshKeyPathDevice'),
+    document.querySelector('label[for="sshPrivateKeyDevice"]'), document.querySelector('#sshPrivateKeyDevice'),
+    document.querySelector('label[for="sshPublicKeyDevice"]'), document.querySelector('#sshPublicKeyDevice'),
+    section, document.querySelector('#clearSshPrivateKey').parentElement, document.querySelector('#test-ssh').parentElement
+  ];
+  sshFields.forEach(field => { field.hidden = android; });
   if (!publicKey || !['linux', 'windows'].includes(platform)) {
     section.hidden = true;
     script.value = '';
@@ -123,6 +140,14 @@ function render() {
     return;
   }
   list.innerHTML = visible.map(d => `<article class="device-card"><div class="device-top"><div class="device-ident"><div class="device-icon"><i class="bi ${d.platform === 'linux' ? 'bi-ubuntu' : 'bi-windows'}"></i></div><div class="min-w-0"><div class="device-name">${escapeHtml(d.name)}</div><div class="device-os">${d.platform === 'linux' ? 'Linux' : 'Windows'} · ${escapeHtml(d.ip)}</div></div></div><span class="status ${d.online ? 'online' : 'offline'}"><span class="status-dot"></span>${d.online ? 'ONLINE' : 'OFFLINE'}</span></div><div class="device-meta"><div class="meta-item"><span>ENDEREÇO IP</span><strong>${escapeHtml(d.ip)}</strong></div><div class="meta-item"><span>ENDEREÇO MAC</span><strong>${escapeHtml(d.mac || 'Não localizado')}</strong></div></div><div class="device-actions"><button class="action-btn wake" data-action="wake" data-id="${d.id}" title="Ligar (Wake-on-LAN)" aria-label="Ligar (Wake-on-LAN)" ${d.mac ? '' : 'disabled'}><i class="bi bi-power" aria-hidden="true"></i></button><button class="action-btn shutdown" data-action="shutdown" data-id="${d.id}" title="Desligar por SSH" aria-label="Desligar por SSH"><i class="bi bi-moon" aria-hidden="true"></i></button><button class="action-btn restart" data-action="restart" data-id="${d.id}" title="Reiniciar por SSH" aria-label="Reiniciar por SSH"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i></button><button class="action-btn info" data-action="info" data-id="${d.id}" title="Informações do equipamento" aria-label="Informações do equipamento"><i class="bi bi-info-circle" aria-hidden="true"></i></button><button class="action-btn edit" data-action="edit" data-id="${d.id}" title="Editar configurações" aria-label="Editar configurações"><i class="bi bi-pencil-square" aria-hidden="true"></i></button><button class="action-btn" data-action="refresh" data-id="${d.id}" title="Atualizar status" aria-label="Atualizar status"><i class="bi bi-arrow-repeat" aria-hidden="true"></i></button><button class="delete-btn" data-action="delete" data-id="${d.id}" title="Remover dispositivo" aria-label="Remover ${escapeHtml(d.name)}"><i class="bi bi-trash3" aria-hidden="true"></i></button></div></article>`).join('');
+  visible.forEach((device, index) => {
+    const card = list.children[index];
+    const labels = { windows: 'Windows', linux: 'Linux', android: 'Android' };
+    const icons = { windows: 'bi-windows', linux: 'bi-ubuntu', android: 'bi-phone' };
+    card.querySelector('.device-os').textContent = `${labels[device.platform] || 'Não identificado'} · ${device.ip}`;
+    card.querySelector('.device-icon i').className = `bi ${icons[device.platform] || 'bi-pc-display'}`;
+    if (device.platform === 'android') card.querySelectorAll('[data-action="shutdown"], [data-action="restart"]').forEach(button => { button.hidden = true; });
+  });
 }
 async function refresh(showError = false) {
   try { const result = await api('/api/devices'); devices = result.devices; sshEnabled = result.sshEnabled; localAddresses = result.networkInterfaces || []; document.querySelector('#last-update').textContent = `Atualizado às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`; document.querySelector('#refresh').classList.remove('is-error'); render(); renderNetworkMap(); }
@@ -330,7 +355,7 @@ document.querySelector('#ssh-form').addEventListener('submit', async event => {
   } catch (error) { errorBox.textContent = error.message; }
   finally { submit.disabled = false; }
 });
-const infoLabels = { registeredName: 'Nome no painel', ip: 'Endereço IP cadastrado', mac: 'MAC cadastrado', platform: 'Sistema cadastrado', source: 'Origem do inventário', hostname: 'Hostname', os: 'Sistema operacional', version: 'Versão', build: 'Build', architecture: 'Arquitetura', kernel: 'Kernel', uptime: 'Tempo ligado', lastBoot: 'Última inicialização', cpu: 'Processador', cores: 'Núcleos físicos', logicalProcessors: 'Processadores lógicos', memoryGB: 'Memória RAM total (GB)', memoryAvailableGB: 'Memória RAM disponível (GB)', memory: 'Memória RAM', swap: 'Memória Swap', disks: 'Discos e partições', network: 'Interfaces e IPv4', macs: 'Interfaces e endereços MAC', manufacturer: 'Fabricante', model: 'Modelo', domain: 'Domínio ou grupo', bios: 'BIOS/UEFI', serial: 'Número de série', imei: 'IMEI', ownership: 'Propriedade', managementAgent: 'Agente de gerenciamento', complianceState: 'Conformidade', lastSync: 'Última sincronização', enrolledAt: 'Inscrição no gerenciamento', enrollmentType: 'Tipo de inscrição', user: 'Usuário principal', wifiMac: 'MAC Wi-Fi', ethernetMac: 'MAC Ethernet', skuFamily: 'Família do Windows', storageTotalGB: 'Armazenamento total (GB)', storageFreeGB: 'Armazenamento livre (GB)', intuneDeviceId: 'ID do dispositivo no Intune', azureADDeviceId: 'ID do dispositivo no Entra ID', gpu: 'Placa(s) de vídeo', load: 'Carga do sistema', processes: 'Processos em execução', collectedAt: 'Consultado em' };
+const infoLabels = { registeredName: 'Nome no painel', ip: 'Endereço IP cadastrado', mac: 'MAC cadastrado', platform: 'Sistema cadastrado', source: 'Origem do inventário', openPorts: 'Portas e serviços visíveis', androidDebugBridge: 'ADB na rede', note: 'Limites da consulta', hostname: 'Hostname', os: 'Sistema operacional', version: 'Versão', build: 'Build', architecture: 'Arquitetura', kernel: 'Kernel', uptime: 'Tempo ligado', lastBoot: 'Última inicialização', cpu: 'Processador', cores: 'Núcleos físicos', logicalProcessors: 'Processadores lógicos', memoryGB: 'Memória RAM total (GB)', memoryAvailableGB: 'Memória RAM disponível (GB)', memory: 'Memória RAM', swap: 'Memória Swap', disks: 'Discos e partições', network: 'Interfaces e IPv4', macs: 'Interfaces e endereços MAC', manufacturer: 'Fabricante', model: 'Modelo', domain: 'Domínio ou grupo', bios: 'BIOS/UEFI', serial: 'Número de série', imei: 'IMEI', ownership: 'Propriedade', managementAgent: 'Agente de gerenciamento', complianceState: 'Conformidade', lastSync: 'Última sincronização', enrolledAt: 'Inscrição no gerenciamento', enrollmentType: 'Tipo de inscrição', user: 'Usuário principal', wifiMac: 'MAC Wi-Fi', ethernetMac: 'MAC Ethernet', skuFamily: 'Família do Windows', storageTotalGB: 'Armazenamento total (GB)', storageFreeGB: 'Armazenamento livre (GB)', intuneDeviceId: 'ID do dispositivo no Intune', azureADDeviceId: 'ID do dispositivo no Entra ID', gpu: 'Placa(s) de vídeo', load: 'Carga do sistema', processes: 'Processos em execução', collectedAt: 'Consultado em' };
 function formatInfo(value) {
   if (value === null || value === undefined || value === '') return 'Não informado';
   if (Array.isArray(value)) return value.length ? value.map(item => typeof item === 'object' ? Object.entries(item).map(([k, v]) => `${k}: ${formatInfo(v)}`).join(' · ') : String(item)).join('\n') : 'Nenhum';
@@ -368,7 +393,7 @@ function renderNetworkMap() {
   const nodes = nodePositions.map(({ entry, x, y, index }) => {
     const status = entry.registered ? (entry.online ? 'Online' : 'Offline') : (entry.online ? 'Ping' : 'ARP');
     const stateClass = entry.registered ? (entry.online ? 'online' : 'offline') : 'found';
-    const icon = entry.platform === 'linux' ? 'bi-ubuntu' : entry.platform === 'windows' ? 'bi-windows' : 'bi-pc-display';
+    const icon = entry.platform === 'linux' ? 'bi-ubuntu' : entry.platform === 'windows' ? 'bi-windows' : entry.platform === 'android' ? 'bi-phone' : 'bi-pc-display';
     return `<button class="map-node ${stateClass} ${selectedMapIp === entry.ip ? 'selected' : ''}" data-map-index="${index}" style="left:${x - 91}px;top:${y - 48}px" aria-label="Selecionar ${escapeHtml(entry.name)}"><span class="map-node-top"><i class="bi ${icon}"></i><b>${escapeHtml(status)}</b></span><strong>${escapeHtml(entry.name)}</strong><small>${escapeHtml(entry.ip)}</small></button>`;
   }).join('');
   graph.innerHTML = `<svg class="map-edges" viewBox="0 0 ${width} ${height}" aria-hidden="true">${lines}<circle cx="${cx}" cy="${cy}" r="8" class="hub-dot"/></svg><div class="map-hub" style="left:${cx - 89}px;top:${cy - 46}px"><i class="bi bi-router"></i><strong>REDE LOCAL</strong><small>${escapeHtml(localAddresses.join(' · ') || 'Servidor STATUS PC')}</small></div>${nodes}`;
@@ -378,8 +403,8 @@ function renderNetworkMap() {
 function showMapDetails(entry) {
   if (!entry) return;
   const state = entry.registered ? (entry.online ? 'ONLINE' : 'OFFLINE') : (entry.online ? 'RESPONDE AO PING' : 'VISTO NA TABELA ARP');
-  const icon = entry.platform === 'linux' ? 'bi-ubuntu' : entry.platform === 'windows' ? 'bi-windows' : 'bi-pc-display';
-  document.querySelector('#map-details').innerHTML = `<div class="map-detail-card"><div class="map-detail-head"><div class="device-icon"><i class="bi ${icon}"></i></div><span class="status ${entry.online ? 'online' : 'offline'}"><span class="status-dot"></span>${state}</span></div><div class="eyebrow">${entry.registered ? 'DISPOSITIVO CADASTRADO' : 'DESCOBERTO NO SCAN'}</div><h3>${escapeHtml(entry.name)}</h3><div class="map-detail-row"><span>Endereço IP</span><strong>${escapeHtml(entry.ip)}</strong></div><div class="map-detail-row"><span>Endereço MAC</span><strong>${escapeHtml(entry.mac || 'Não identificado')}</strong></div><div class="map-detail-row"><span>Sistema</span><strong>${escapeHtml(entry.platform === 'linux' ? 'Linux' : entry.platform === 'windows' ? 'Windows' : 'Não identificado')}</strong></div>${entry.registered ? `<div class="map-detail-row"><span>Destino SSH</span><strong>${escapeHtml(entry.device.sshHost || 'Não configurado')}</strong></div><button class="btn btn-primary map-info-button" data-map-info="${entry.device.id}"><i class="bi bi-info-circle"></i> Informações completas</button>` : '<p class="map-discovery-note">Cadastre o equipamento para configurar SSH e consultar detalhes.</p>'}</div>`;
+  const icon = entry.platform === 'linux' ? 'bi-ubuntu' : entry.platform === 'windows' ? 'bi-windows' : entry.platform === 'android' ? 'bi-phone' : 'bi-pc-display';
+  document.querySelector('#map-details').innerHTML = `<div class="map-detail-card"><div class="map-detail-head"><div class="device-icon"><i class="bi ${icon}"></i></div><span class="status ${entry.online ? 'online' : 'offline'}"><span class="status-dot"></span>${state}</span></div><div class="eyebrow">${entry.registered ? 'DISPOSITIVO CADASTRADO' : 'DESCOBERTO NO SCAN'}</div><h3>${escapeHtml(entry.name)}</h3><div class="map-detail-row"><span>Endereço IP</span><strong>${escapeHtml(entry.ip)}</strong></div><div class="map-detail-row"><span>Endereço MAC</span><strong>${escapeHtml(entry.mac || 'Não identificado')}</strong></div><div class="map-detail-row"><span>Sistema</span><strong>${escapeHtml(entry.platform === 'linux' ? 'Linux' : entry.platform === 'windows' ? 'Windows' : entry.platform === 'android' ? 'Android' : 'Não identificado')}</strong></div>${entry.registered ? `<div class="map-detail-row"><span>${entry.platform === 'android' ? 'Inventário' : 'Destino SSH'}</span><strong>${entry.platform === 'android' ? 'Nmap' : escapeHtml(entry.device.sshHost || 'Não configurado')}</strong></div><button class="btn btn-primary map-info-button" data-map-info="${entry.device.id}"><i class="bi bi-info-circle"></i> Informações completas</button>` : '<p class="map-discovery-note">Cadastre o equipamento para configurar SSH e consultar detalhes.</p>'}</div>`;
 }
 document.querySelector('#network-graph').addEventListener('click', event => {
   const node = event.target.closest('[data-map-index]');
@@ -405,14 +430,14 @@ async function showInfo(device) {
   const modal = bootstrap.Modal.getOrCreateInstance(document.querySelector('#info-modal'));
   document.querySelector('#info-device-label').textContent = `${device.name} · ${device.ip}`;
   const content = document.querySelector('#info-content');
-  content.innerHTML = '<div class="info-loading"><span class="spinner-border spinner-border-sm"></span> Consultando inventário do Windows no Intune ou do equipamento por SSH...</div>';
+  content.innerHTML = '<div class="info-loading"><span class="spinner-border spinner-border-sm"></span> Consultando o Intune, Nmap ou SSH conforme o dispositivo...</div>';
   modal.show();
   try {
     const result = await api(`/api/devices/${device.id}/info`, { method: 'POST' });
-    const details = { registeredName: device.name, ip: device.ip, mac: device.mac, platform: device.platform === 'linux' ? 'Linux' : 'Windows', ...result.info, collectedAt: new Date(result.collectedAt).toLocaleString('pt-BR') };
+    const details = { registeredName: device.name, ip: device.ip, mac: device.mac, platform: ({ linux: 'Linux', windows: 'Windows', android: 'Android' })[device.platform] || device.platform, ...result.info, collectedAt: new Date(result.collectedAt).toLocaleString('pt-BR') };
     content.innerHTML = Object.entries(details).map(([key, value]) => `<div class="info-item"><span>${escapeHtml(infoLabels[key] || key)}</span><strong>${escapeHtml(formatInfo(value))}</strong></div>`).join('');
   } catch (error) {
-    content.innerHTML = `<div class="info-error"><i class="bi bi-exclamation-circle"></i><strong>Não foi possível consultar o equipamento</strong><p>${escapeHtml(error.message)}</p><small>Para consultar o Intune, confira as variáveis INTUNE_* e a permissão Microsoft Graph DeviceManagementManagedDevices.Read.All com consentimento de administrador. Sem Intune configurado, confira o SSH e known_hosts.</small></div>`;
+    content.innerHTML = `<div class="info-error"><i class="bi bi-exclamation-circle"></i><strong>Não foi possível consultar o equipamento</strong><p>${escapeHtml(error.message)}</p><small>Para consultar o Intune, confira as variáveis INTUNE_* e a permissão Microsoft Graph DeviceManagementManagedDevices.Read.All com consentimento de administrador. Sem Intune configurado, confira o SSH/known_hosts ou a conectividade de rede do Android.</small></div>`;
   }
 }
 list.addEventListener('click', async event => {

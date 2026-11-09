@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const dgram = require('node:dgram');
+const net = require('node:net');
 const { execFile } = require('node:child_process');
 const crypto = require('node:crypto');
 const { Client: SshClient, utils: SshUtils } = require('ssh2');
@@ -278,6 +279,68 @@ function remotePower(device, action = 'shutdown') {
     : (action === 'restart' ? 'powershell.exe -NoProfile -NonInteractive -Command "Restart-Computer -Force"' : 'powershell.exe -NoProfile -NonInteractive -Command "Stop-Computer -Force"');
   return runSshCommand(device, command, 10000);
 }
+function parseNmapAndroidInfo(xml, device) {
+  const host = xml.match(/<host\b[\s\S]*?<\/host>/)?.[0];
+  if (!host) throw new Error('O Nmap não retornou informações para este endereço. Verifique se o Android está conectado à mesma rede.');
+  const attr = (tag, name) => {
+    const match = tag.match(new RegExp(`\\b${name}="([^"]*)"`));
+    return match ? match[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&apos;/g, "'") : '';
+  };
+  const macTag = host.match(/<address\b[^>]*addrtype="mac"[^>]*\/>/i)?.[0] || '';
+  const vendor = attr(macTag, 'vendor');
+  const hostname = attr(host.match(/<hostname\b[^>]*\/>/i)?.[0] || '', 'name');
+  const ports = Array.from(host.matchAll(/<port\b([^>]*)>([\s\S]*?)<\/port>/gi), match => {
+    const port = attr(match[1], 'portid');
+    const state = attr(match[2].match(/<state\b[^>]*\/>/i)?.[0] || '', 'state');
+    if (state !== 'open') return null;
+    const serviceTag = match[2].match(/<service\b[^>]*\/>/i)?.[0] || '';
+    const service = [attr(serviceTag, 'name'), attr(serviceTag, 'product'), attr(serviceTag, 'version'), attr(serviceTag, 'extrainfo')].filter(Boolean).join(' ');
+    return { port: Number(port), protocol: attr(match[1], 'protocol') || 'tcp', service: service || 'desconhecido' };
+  }).filter(Boolean);
+  return {
+    source: 'Nmap (varredura de rede)', hostname: hostname || undefined,
+    os: 'Android (informado no cadastro)', manufacturer: vendor || undefined,
+    mac: attr(macTag, 'addr') || device.mac || undefined,
+    openPorts: ports.length ? ports : 'Nenhuma porta TCP comum exposta',
+    androidDebugBridge: ports.some(item => item.port === 5555) ? 'Porta 5555 aberta; confirme se ADB está habilitado e protegido' : 'Não detectado',
+    note: 'Nmap identifica dados visíveis na rede. Versão do Android, modelo e número de série não são expostos por padrão.'
+  };
+}
+function probeAndroidPorts(ip) {
+  const ports = [22, 53, 80, 443, 554, 5555, 5556, 8008, 8009, 8080, 8443, 9000, 10000];
+  return mapWithConcurrency(ports, 8, port => new Promise(resolve => {
+    const socket = net.createConnection({ host: ip, port });
+    let settled = false;
+    const finish = open => { if (settled) return; settled = true; socket.destroy(); resolve(open); };
+    socket.setTimeout(650, () => finish(false));
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+  })).then(results => ports.filter((_port, index) => results[index]).map(port => ({ port, protocol: 'tcp', service: 'desconhecido' })));
+}
+async function androidInfo(device) {
+  if (!validIp(device.ip)) throw new Error('Endereço IPv4 inválido para a consulta Android.');
+  const args = ['-Pn', '-sT', '-sV', '--version-light', '--top-ports', '100', '-T3', '--host-timeout', '30s', '-oX', '-', device.ip];
+  const xml = await new Promise((resolve, reject) => {
+    execFile('nmap', args, { timeout: 35000, maxBuffer: 1_000_000, windowsHide: true }, (error, stdout, stderr) => {
+      if (error) {
+        if (error.code === 'ENOENT') return reject(Object.assign(new Error('Nmap não está instalado no servidor. Instale o pacote nmap para consultar informações básicas do Android.'), { code: 'NMAP_MISSING' }));
+        return reject(new Error(stderr.trim() || `Falha ao executar Nmap: ${error.message}`));
+      }
+      resolve(stdout);
+    });
+  }).catch(async error => {
+    if (error.code !== 'NMAP_MISSING') throw error;
+    const openPorts = await probeAndroidPorts(device.ip);
+    return {
+      source: 'Sonda TCP local (fallback sem Nmap)', os: 'Android (informado no cadastro)',
+      mac: device.mac || undefined, openPorts: openPorts.length ? openPorts : 'Nenhuma porta TCP comum exposta',
+      androidDebugBridge: openPorts.some(item => item.port === 5555) ? 'Porta 5555 aberta; confirme se ADB está habilitado e protegido' : 'Não detectado',
+      note: 'Instale Nmap no servidor para identificar serviços e fabricante. O modelo e a versão do Android não são expostos por padrão.'
+    };
+  });
+  if (typeof xml !== 'string') return xml;
+  return parseNmapAndroidInfo(xml, device);
+}
 function remoteInfo(device) {
   if (!validSshDestination(device.sshHost)) throw new Error('Configure o destino SSH deste equipamento no formato usuario@host.');
   if (!['linux', 'windows'].includes(device.platform)) throw new Error('Sistema operacional inválido.');
@@ -392,7 +455,7 @@ const server = http.createServer(async (req, res) => {
         const sshPort = Number(item.sshPort || 22);
         const sshKeyPath = String(item.sshKeyPath || '').trim();
         const sshPublicKey = String(item.sshPublicKey || '').trim();
-        if (!name || !validIp(ip) || (mac && !validMac(mac)) || !['windows', 'linux'].includes(platform)) return send(res, 400, { error: `Configuração ${i + 1}: nome, IPv4, MAC ou sistema operacional inválido.` });
+        if (!name || !validIp(ip) || (mac && !validMac(mac)) || !['windows', 'linux', 'android'].includes(platform)) return send(res, 400, { error: `Configuração ${i + 1}: nome, IPv4, MAC ou sistema operacional inválido.` });
         if (sshHost && !validSshDestination(sshHost)) return send(res, 400, { error: `Configuração ${i + 1}: use o destino SSH no formato usuario@host.` });
         if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65535) return send(res, 400, { error: `Configuração ${i + 1}: porta SSH inválida.` });
         if (sshKeyPath.length > 500) return send(res, 400, { error: `Configuração ${i + 1}: caminho da chave SSH muito longo.` });
@@ -460,7 +523,7 @@ const server = http.createServer(async (req, res) => {
       const sshPrivateKey = body.sshPrivateKey === undefined ? '' : body.sshPrivateKey;
       const broadcast = String(body.broadcast || '').trim();
       if (!name || !validIp(ip) || (mac && !validMac(mac))) return send(res, 400, { error: 'Informe nome e IPv4 válidos; se preencher MAC, ele precisa ser válido.' });
-      if (!['windows', 'linux'].includes(platform)) return send(res, 400, { error: 'Selecione Windows ou Linux.' });
+      if (!['windows', 'linux', 'android'].includes(platform)) return send(res, 400, { error: 'Selecione Windows, Linux ou Android.' });
       if (sshHost && !validSshDestination(sshHost)) return send(res, 400, { error: 'Informe um destino SSH válido no formato usuario@IP ou usuario@hostname.' });
       if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65535) return send(res, 400, { error: 'A porta SSH precisa estar entre 1 e 65535.' });
       if (sshKeyPath.length > 500) return send(res, 400, { error: 'O caminho da chave SSH pode ter no máximo 500 caracteres.' });
@@ -497,7 +560,7 @@ const server = http.createServer(async (req, res) => {
         const sshPrivateKey = body.sshPrivateKey === undefined ? '' : body.sshPrivateKey;
         const broadcast = body.broadcast === undefined || body.broadcast === '' ? (validIp(current.broadcast) ? current.broadcast : '255.255.255.255') : String(body.broadcast).trim();
         if (!name || !validIp(ip) || (mac && !validMac(mac))) return send(res, 400, { error: 'Informe nome e IPv4 válidos; se preencher MAC, ele precisa ser válido.' });
-        if (!['windows', 'linux'].includes(platform)) return send(res, 400, { error: 'Selecione Windows ou Linux.' });
+        if (!['windows', 'linux', 'android'].includes(platform)) return send(res, 400, { error: 'Selecione Windows, Linux ou Android.' });
         if (sshHost && !validSshDestination(sshHost)) return send(res, 400, { error: 'Informe um destino válido no formato usuario@IP ou usuario@hostname.' });
         if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65535) return send(res, 400, { error: 'A porta SSH precisa estar entre 1 e 65535.' });
         if (sshKeyPath.length > 500) return send(res, 400, { error: 'O caminho da chave SSH pode ter no máximo 500 caracteres.' });
@@ -523,7 +586,20 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'POST' && match[2] === 'wake') { if (!validMac(devices[index].mac)) return send(res, 400, { error: 'Este dispositivo não tem endereço MAC cadastrado para Wake-on-LAN.' }); await wake(devices[index].mac, devices[index].broadcast); return send(res, 200, { ok: true }); }
       if (req.method === 'POST' && ['shutdown', 'restart'].includes(match[2])) { await remotePower(devices[index], match[2]); return send(res, 200, { ok: true }); }
-      if (req.method === 'POST' && match[2] === 'info') { const info = devices[index].platform === 'windows' && INTUNE_TENANT_ID && INTUNE_CLIENT_ID && INTUNE_CLIENT_SECRET ? await intuneInfo(devices[index]) : await remoteInfo(devices[index]); return send(res, 200, { info, collectedAt: new Date().toISOString() }); }
+      if (req.method === 'POST' && match[2] === 'info') {
+        const device = devices[index];
+        let info;
+        if (device.platform === 'android') {
+          info = INTUNE_TENANT_ID && INTUNE_CLIENT_ID && INTUNE_CLIENT_SECRET ? await intuneInfo(device).catch(error => {
+            if (error.message.startsWith('O Intune não encontrou um dispositivo')) return null;
+            throw error;
+          }) : null;
+          if (!info) info = await androidInfo(device);
+        } else {
+          info = device.platform === 'windows' && INTUNE_TENANT_ID && INTUNE_CLIENT_ID && INTUNE_CLIENT_SECRET ? await intuneInfo(device) : await remoteInfo(device);
+        }
+        return send(res, 200, { info, collectedAt: new Date().toISOString() });
+      }
     }
     if (req.method === 'GET' && !url.pathname.startsWith('/api/')) {
       const requested = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
